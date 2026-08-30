@@ -1,0 +1,12 @@
+node_modules
+.next
+*.mp3
+*.mp4
+*.pdf
+*.jpg
+*.png
+*.zip
+*.apk
+Eitaa/
+Shad/
+downloaded_rom/
