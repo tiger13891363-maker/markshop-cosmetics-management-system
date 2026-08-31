@@ -1,7 +1,6 @@
 "use client";
 
 import React, { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import {
   Eye,
   MapPin,
@@ -90,7 +89,7 @@ function OrdersInner() {
     deleteOrder,
     toast,
   } = useApp();
-  const params = useSearchParams();
+  const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
 
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");

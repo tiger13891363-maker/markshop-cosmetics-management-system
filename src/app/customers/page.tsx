@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { Eye, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { Shell } from "@/components/Shell";
 import { useApp } from "@/store/AppStore";
@@ -43,7 +42,7 @@ function CustomersInner() {
     deleteCustomer,
     toast,
   } = useApp();
-  const params = useSearchParams();
+  const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
 
   const [q, setQ] = useState("");
   const [st, setSt] = useState("all");

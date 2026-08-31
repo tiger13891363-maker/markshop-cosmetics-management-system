@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { Eye, ImagePlus, Pencil, Plus, ShoppingBag, Trash2 } from "lucide-react";
 import { Shell } from "@/components/Shell";
 import { useApp } from "@/store/AppStore";
@@ -47,7 +46,7 @@ const emptyForm: FormState = {
 function ProductsInner() {
   const { loading, products, addProduct, updateProduct, deleteProduct, toast } =
     useApp();
-  const params = useSearchParams();
+  const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
 
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
