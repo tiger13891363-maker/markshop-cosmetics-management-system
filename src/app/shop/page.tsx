@@ -345,13 +345,25 @@ export default function ShopPage() {
                   </p>
                 </div>
 
-                <Link
-                  href="/register"
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem(
+                      "markshop-cart",
+                      JSON.stringify(
+                        cart.map((item) => ({
+                          productId: item.id,
+                          qty: item.qty,
+                        }))
+                      )
+                    );
+                    window.location.href = "/register";
+                  }}
                   className="flex items-center justify-center gap-2 rounded-xl bg-gold-400 px-6 py-3 font-black text-indigo-950 transition hover:scale-105"
                 >
                   ادامه و ثبت سفارش
                   <ArrowLeft className="h-5 w-5" />
-                </Link>
+                </button>
               </div>
             </>
           )}
