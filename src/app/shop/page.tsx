@@ -1,4 +1,5 @@
 "use client";
+import React from 'react'
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
@@ -21,6 +22,23 @@ type CartItem = {
   price: number;
   qty: number;
 };
+
+function useSupabaseProducts() {
+  const [products, setProducts] = React.useState<any[]>([])
+  const [loading, setLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    fetch('/api/products')
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) setProducts(data)
+      })
+      .catch((error) => console.error(error))
+      .finally(() => setLoading(false))
+  }, [])
+
+  return { products, loading }
+}
 
 export default function ShopPage() {
   const { loading, products, settings } = useApp();

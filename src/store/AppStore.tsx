@@ -1,13 +1,5 @@
 "use client";
 
-// ─────────────────────────────────────────────────────────────
-// Markshop application store.
-// Today: mock data + localStorage persistence + simulated
-// latency (so loading states feel real).
-// Later: swap each action body with a REST / Mixin / DB call —
-// the props and hooks stay exactly the same.
-// ─────────────────────────────────────────────────────────────
-
 import React, {
   createContext,
   useCallback,
@@ -17,6 +9,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+
 import type {
   Customer,
   NotificationItem,
@@ -26,16 +19,9 @@ import type {
   Settings,
   ToastItem,
 } from "@/lib/types";
-import {
-  defaultSettings,
-  seedCustomers,
-  seedOrders,
-  seedProducts,
-} from "@/lib/mock-data";
-import { uid } from "@/lib/format";
 
-const LS_KEY = "markshop:data:v3";
-const wait = (ms = 520) => new Promise<void>((r) => setTimeout(r, ms));
+import { defaultSettings } from "@/lib/mock-data";
+import { supabase } from "@/lib/supabase";
 
 interface RegisterInput {
   name: string;
@@ -63,7 +49,9 @@ interface AppCtx {
   addProduct: (p: Omit<Product, "id">) => Promise<void>;
   updateProduct: (id: string, patch: Partial<Product>) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
-  addCustomer: (c: Omit<Customer, "id" | "registrationDate">) => Promise<void>;
+  addCustomer: (
+    c: Omit<Customer, "id" | "registrationDate">
+  ) => Promise<void>;
   updateCustomer: (id: string, patch: Partial<Customer>) => Promise<void>;
   deleteCustomer: (id: string) => Promise<void>;
   saveSettings: (patch: Partial<Settings>) => Promise<void>;
@@ -74,24 +62,56 @@ const Ctx = createContext<AppCtx | null>(null);
 
 export function useApp() {
   const ctx = useContext(Ctx);
-  if (!ctx) throw new Error("useApp must be used inside <AppProvider>");
+  if (!ctx) {
+    throw new Error("useApp must be used inside <AppProvider>");
+  }
   return ctx;
 }
 
-function loadPersisted() {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(LS_KEY);
-    if (!raw) return null;
-    const d = JSON.parse(raw);
-    if (!d.products || !d.customers || !d.orders) return null;
-    return d;
-  } catch {
-    return null;
-  }
+function productFromDb(row: any): Product {
+  return {
+    id: String(row.id),
+    name: row.name ?? "",
+    category: row.category ?? "سایر",
+    price: Number(row.price ?? 0),
+    stock: Number(row.stock ?? 0),
+    image: row.image_url ?? "",
+    status: row.status === "archived" ? "archived" : "active",
+    description: row.description ?? undefined,
+  };
 }
 
-export function AppProvider({ children }: { children: React.ReactNode }) {
+function customerFromDb(row: any): Customer {
+  return {
+    id: String(row.id),
+    name: row.name ?? "",
+    phone: row.phone ?? "",
+    registrationDate: row.created_at ?? new Date().toISOString(),
+    status: "active",
+  };
+}
+
+function orderFromDb(row: any, items: OrderItem[] = []): Order {
+  return {
+    id: String(row.id),
+    code: `MS-${row.id}`,
+    customerId: "",
+    customerName: row.customer_name ?? "",
+    customerPhone: row.phone ?? "",
+    items,
+    total: Number(row.total ?? 0),
+    status: row.status ?? "new",
+    date: row.created_at ?? new Date().toISOString(),
+    address: row.address ?? undefined,
+    notes: row.notes ?? undefined,
+  };
+}
+
+export function AppProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -101,57 +121,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [unread, setUnread] = useState(0);
   const toastSeq = useRef(1);
 
-  // Initial load (simulated fetch)
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      await wait(750);
-      const d = loadPersisted();
-      if (!alive) return;
-      setProducts(d?.products ?? seedProducts);
-      setCustomers(d?.customers ?? seedCustomers);
-      setOrders(d?.orders ?? seedOrders);
-      setSettings({ ...defaultSettings, ...(d?.settings ?? {}) });
-      if (d) {
-        const recent = (d.orders as Order[]).filter((o) => {
-          const h = (Date.now() - new Date(o.date).getTime()) / 36e5;
-          return o.status === "new" && h < 72;
-        }).length;
-        const low = (d.products as Product[]).filter((p) => p.stock > 0 && p.stock < 10).length;
-        setUnread(Math.min(recent + low, 9));
-      } else {
-        setUnread(4);
-      }
-      setLoading(false);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // Persist
-  useEffect(() => {
-    if (loading) return;
-    try {
-      window.localStorage.setItem(
-        LS_KEY,
-        JSON.stringify({ products, customers, orders, settings })
-      );
-    } catch {
-      /* storage full — ignore in mock mode */
-    }
-  }, [products, customers, orders, settings, loading]);
-
-  // Brand accent
-  useEffect(() => {
-    document.documentElement.dataset.accent = settings.accent;
-  }, [settings.accent]);
-
   const toast = useCallback(
     (type: ToastItem["type"], title: string, message?: string) => {
       const id = toastSeq.current++;
       setToasts((t) => [...t, { id, type, title, message }]);
-      setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4200);
+
+      setTimeout(() => {
+        setToasts((t) => t.filter((x) => x.id !== id));
+      }, 4200);
     },
     []
   );
@@ -160,64 +137,251 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setToasts((t) => t.filter((x) => x.id !== id));
   }, []);
 
-  const markAllRead = useCallback(() => setUnread(0), []);
+  const markAllRead = useCallback(() => {
+    setUnread(0);
+  }, []);
 
-  // ── Orders ────────────────────────────────────────────────
+  const loadData = useCallback(async () => {
+    setLoading(true);
+
+    try {
+      const [
+        productsResult,
+        customersResult,
+        ordersResult,
+        itemsResult,
+      ] = await Promise.all([
+        supabase.from("products").select("*").order("id", { ascending: false }),
+        supabase.from("customers").select("*").order("id", { ascending: false }),
+        supabase.from("orders").select("*").order("id", { ascending: false }),
+        supabase.from("order_items").select("*").order("id", { ascending: true }),
+      ]);
+
+      if (productsResult.error) {
+        throw new Error(productsResult.error.message);
+      }
+
+      if (customersResult.error) {
+        throw new Error(customersResult.error.message);
+      }
+
+      if (ordersResult.error) {
+        throw new Error(ordersResult.error.message);
+      }
+
+      if (itemsResult.error) {
+        throw new Error(itemsResult.error.message);
+      }
+
+      const dbProducts = (productsResult.data ?? []).map(productFromDb);
+      const dbCustomers = (customersResult.data ?? []).map(customerFromDb);
+      const dbItems = itemsResult.data ?? [];
+
+      const dbOrders = (ordersResult.data ?? []).map((row: any) => {
+        const items: OrderItem[] = dbItems
+          .filter((item: any) => String(item.order_id) === String(row.id))
+          .map((item: any) => {
+            const product = dbProducts.find(
+              (p) => String(p.id) === String(item.product_id)
+            );
+
+            return {
+              productId: String(item.product_id),
+              name: product?.name ?? "محصول",
+              qty: Number(item.quantity ?? 1),
+              price: Number(item.price ?? 0),
+            };
+          });
+
+        return orderFromDb(row, items);
+      });
+
+      setProducts(dbProducts);
+      setCustomers(dbCustomers);
+      setOrders(dbOrders);
+
+      const recent = dbOrders.filter((o) => {
+        const hours =
+          (Date.now() - new Date(o.date).getTime()) / 36e5;
+        return o.status === "new" && hours < 72;
+      }).length;
+
+      const low = dbProducts.filter(
+        (p) => p.stock > 0 && p.stock < 10
+      ).length;
+
+      setUnread(Math.min(recent + low, 9));
+    } catch (error) {
+      console.error("Supabase load error:", error);
+      toast(
+        "error",
+        "خطا در اتصال به پایگاه داده",
+        error instanceof Error ? error.message : "خطای نامشخص"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    document.documentElement.dataset.accent = settings.accent;
+  }, [settings.accent]);
+
   const registerOrder = useCallback(
     async (input: RegisterInput): Promise<Order> => {
-      await wait(900);
-      let cid = customers.find(
-        (c) => c.phone === input.phone.trim()
-      )?.id;
-      let name = input.name.trim();
-      let phone = input.phone.trim();
-      if (!cid) {
-        cid = uid();
-        const nc: Customer = {
-          id: cid,
-          name,
-          phone,
-          registrationDate: new Date().toISOString(),
-          status: "active",
-        };
-        setCustomers((cs) => [nc, ...cs]);
-      } else {
-        const known = customers.find((c) => c.id === cid)!;
-        name = known.name;
+      const phone = input.phone.trim();
+      const name = input.name.trim();
+
+      let customer = customers.find((c) => c.phone === phone);
+
+      if (!customer) {
+        const { data, error } = await supabase
+          .from("customers")
+          .insert({
+            name,
+            phone,
+            address: input.address?.trim() || null,
+          })
+          .select()
+          .single();
+
+        if (error) throw new Error(error.message);
+
+        customer = customerFromDb(data);
+        setCustomers((cs) => [customer!, ...cs]);
       }
-      const next = orders.reduce(
-        (m, o) => Math.max(m, parseInt(o.code.replace(/\D/g, ""), 10) || 0),
-        1043
-      ) + 1;
+
+      const total = input.items.reduce(
+        (sum, item) => sum + item.qty * item.price,
+        0
+      );
+
+      const { data: orderData, error: orderError } = await supabase
+        .from("orders")
+        .insert({
+          customer_name: name,
+          phone,
+          address: input.address?.trim() || null,
+          total,
+          status: "new",
+          notes: input.notes?.trim() || null,
+        })
+        .select()
+        .single();
+
+      if (orderError) {
+        throw new Error(orderError.message);
+      }
+
+      const orderId = orderData.id;
+
+      const rows = input.items.map((item) => ({
+        order_id: orderId,
+        product_id: Number(item.productId),
+        quantity: item.qty,
+        price: item.price,
+      }));
+
+      if (rows.length) {
+        const { error: itemsError } = await supabase
+          .from("order_items")
+          .insert(rows);
+
+        if (itemsError) {
+          await supabase.from("orders").delete().eq("id", orderId);
+          throw new Error(itemsError.message);
+        }
+      }
+
+      for (const item of input.items) {
+        const product = products.find(
+          (p) => String(p.id) === String(item.productId)
+        );
+
+        if (product) {
+          const newStock = Math.max(0, product.stock - item.qty);
+
+          await supabase
+            .from("products")
+            .update({ stock: newStock })
+            .eq("id", Number(product.id));
+        }
+      }
+
       const order: Order = {
-        id: uid(),
-        code: `MS-${next}`,
-        customerId: cid,
+        id: String(orderData.id),
+        code: `MS-${orderData.id}`,
+        customerId: String(customer!.id),
         customerName: name,
         customerPhone: phone,
         items: input.items,
-        total: input.items.reduce((s, i) => s + i.qty * i.price, 0),
+        total,
         status: "new",
-        date: new Date().toISOString(),
+        date: orderData.created_at,
         address: input.address?.trim() || undefined,
         notes: input.notes?.trim() || undefined,
       };
+
       setOrders((os) => [order, ...os]);
+
       setProducts((ps) =>
         ps.map((p) => {
-          const it = input.items.find((i) => i.productId === p.id);
-          return it ? { ...p, stock: Math.max(0, p.stock - it.qty) } : p;
+          const item = input.items.find(
+            (i) => String(i.productId) === String(p.id)
+          );
+
+          return item
+            ? { ...p, stock: Math.max(0, p.stock - item.qty) }
+            : p;
         })
       );
+
       setUnread((u) => u + 1);
+
       return order;
     },
-    [customers, orders]
+    [customers, products]
   );
 
   const updateOrder = useCallback(
     async (id: string, patch: Partial<Order>) => {
-      await wait();
+      const dbPatch: any = {};
+
+      if (patch.customerName !== undefined) {
+        dbPatch.customer_name = patch.customerName;
+      }
+
+      if (patch.customerPhone !== undefined) {
+        dbPatch.phone = patch.customerPhone;
+      }
+
+      if (patch.address !== undefined) {
+        dbPatch.address = patch.address || null;
+      }
+
+      if (patch.total !== undefined) {
+        dbPatch.total = patch.total;
+      }
+
+      if (patch.status !== undefined) {
+        dbPatch.status = patch.status;
+      }
+
+      if (patch.notes !== undefined) {
+        dbPatch.notes = patch.notes || null;
+      }
+
+      const { error } = await supabase
+        .from("orders")
+        .update(dbPatch)
+        .eq("id", Number(id));
+
+      if (error) throw new Error(error.message);
+
       setOrders((os) =>
         os.map((o) => (o.id === id ? { ...o, ...patch } : o))
       );
@@ -227,107 +391,188 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const deleteOrder = useCallback(
     async (id: string) => {
-      await wait();
-      setOrders((os) => {
-        const target = os.find((o) => o.id === id);
-        if (target && target.status !== "cancelled") {
-          setProducts((ps) =>
-            ps.map((p) => {
-              const it = target.items.find((i) => i.productId === p.id);
-              return it ? { ...p, stock: p.stock + it.qty } : p;
-            })
-          );
-        }
-        return os.filter((o) => o.id !== id);
-      });
+      const { error } = await supabase
+        .from("orders")
+        .delete()
+        .eq("id", Number(id));
+
+      if (error) throw new Error(error.message);
+
+      setOrders((os) => os.filter((o) => o.id !== id));
     },
     []
   );
 
-  // ── Products ──────────────────────────────────────────────
-  const addProduct = useCallback(async (p: Omit<Product, "id">) => {
-    await wait();
-    setProducts((ps) => [{ ...p, id: uid() }, ...ps]);
-  }, []);
+  const addProduct = useCallback(
+    async (p: Omit<Product, "id">) => {
+      const { data, error } = await supabase
+        .from("products")
+        .insert({
+          name: p.name,
+          category: p.category,
+          price: p.price,
+          stock: p.stock,
+          image_url: p.image || null,
+          status: p.status,
+          description: p.description || null,
+        })
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+
+      setProducts((ps) => [productFromDb(data), ...ps]);
+    },
+    []
+  );
 
   const updateProduct = useCallback(
     async (id: string, patch: Partial<Product>) => {
-      await wait();
-      setProducts((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+      const dbPatch: any = {};
+
+      if (patch.name !== undefined) dbPatch.name = patch.name;
+      if (patch.category !== undefined) dbPatch.category = patch.category;
+      if (patch.price !== undefined) dbPatch.price = patch.price;
+      if (patch.stock !== undefined) dbPatch.stock = patch.stock;
+      if (patch.image !== undefined) {
+        dbPatch.image_url = patch.image || null;
+      }
+      if (patch.status !== undefined) dbPatch.status = patch.status;
+      if (patch.description !== undefined) {
+        dbPatch.description = patch.description || null;
+      }
+
+      const { data, error } = await supabase
+        .from("products")
+        .update(dbPatch)
+        .eq("id", Number(id))
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+
+      const updated = productFromDb(data);
+
+      setProducts((ps) =>
+        ps.map((p) => (p.id === id ? updated : p))
+      );
     },
     []
   );
 
   const deleteProduct = useCallback(async (id: string) => {
-    await wait();
+    const { error } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", Number(id));
+
+    if (error) throw new Error(error.message);
+
     setProducts((ps) => ps.filter((p) => p.id !== id));
   }, []);
 
-  // ── Customers ─────────────────────────────────────────────
   const addCustomer = useCallback(
-    async (c: Omit<Customer, "id" | "registrationDate">) => {
-      await wait();
-      setCustomers((cs) => [
-        { ...c, id: uid(), registrationDate: new Date().toISOString() },
-        ...cs,
-      ]);
+    async (
+      c: Omit<Customer, "id" | "registrationDate">
+    ) => {
+      const { data, error } = await supabase
+        .from("customers")
+        .insert({
+          name: c.name,
+          phone: c.phone,
+        })
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+
+      setCustomers((cs) => [customerFromDb(data), ...cs]);
     },
     []
   );
 
   const updateCustomer = useCallback(
     async (id: string, patch: Partial<Customer>) => {
-      await wait();
+      const dbPatch: any = {};
+
+      if (patch.name !== undefined) dbPatch.name = patch.name;
+      if (patch.phone !== undefined) dbPatch.phone = patch.phone;
+
+      const { data, error } = await supabase
+        .from("customers")
+        .update(dbPatch)
+        .eq("id", Number(id))
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+
+      const updated = customerFromDb(data);
+
       setCustomers((cs) =>
-        cs.map((c) => (c.id === id ? { ...c, ...patch } : c))
+        cs.map((c) => (c.id === id ? updated : c))
       );
     },
     []
   );
 
   const deleteCustomer = useCallback(async (id: string) => {
-    await wait();
+    const { error } = await supabase
+      .from("customers")
+      .delete()
+      .eq("id", Number(id));
+
+    if (error) throw new Error(error.message);
+
     setCustomers((cs) => cs.filter((c) => c.id !== id));
   }, []);
 
-  // ── Settings ──────────────────────────────────────────────
-  const saveSettings = useCallback(async (patch: Partial<Settings>) => {
-    await wait(400);
-    setSettings((s) => ({ ...s, ...patch }));
-  }, []);
+  const saveSettings = useCallback(
+    async (patch: Partial<Settings>) => {
+      setSettings((s) => ({ ...s, ...patch }));
+    },
+    []
+  );
 
   const resetData = useCallback(() => {
-    window.localStorage.removeItem(LS_KEY);
-    window.location.reload();
-  }, []);
+    loadData();
+  }, [loadData]);
 
-  // ── Derived notifications ─────────────────────────────────
   const notifications = useMemo<NotificationItem[]>(() => {
     if (loading) return [];
+
     const list: NotificationItem[] = [];
+
     orders
-      .filter((o) => (Date.now() - new Date(o.date).getTime()) / 36e5 < 72)
+      .filter(
+        (o) =>
+          (Date.now() - new Date(o.date).getTime()) / 36e5 < 72
+      )
       .slice(0, 5)
-      .forEach((o) =>
+      .forEach((o) => {
         list.push({
           id: `n-${o.id}`,
           type: "order",
           title: `سفارش ${o.code} از ${o.customerName} ثبت شد`,
           time: o.date,
-        })
-      );
+        });
+      });
+
     products
       .filter((p) => p.stock > 0 && p.stock < 10)
       .slice(0, 4)
-      .forEach((p) =>
+      .forEach((p) => {
         list.push({
           id: `s-${p.id}`,
           type: "stock",
           title: `موجودی «${p.name}» رو به اتمام است`,
           time: new Date().toISOString(),
-        })
-      );
-    return list.sort((a, b) => b.time.localeCompare(a.time)).slice(0, 8);
+        });
+      });
+
+    return list
+      .sort((a, b) => b.time.localeCompare(a.time))
+      .slice(0, 8);
   }, [orders, products, loading]);
 
   const value: AppCtx = {

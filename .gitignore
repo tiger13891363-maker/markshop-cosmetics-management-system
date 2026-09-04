@@ -10,3 +10,25 @@ node_modules
 Eitaa/
 Shad/
 downloaded_rom/
+.env.local
+.env*
+*.flac
+*.pptx
+*.attachment
+attachment
+browser_m3u/
+tsconfig.tsbuildinfo
+*.backup
+*.backup2
+
+# Personal / temporary files
+*.flac
+*.pptx
+*.attachment
+attachment
+browser_m3u/
+tsconfig.tsbuildinfo
+*.backup
+*.backup2
+Arena*
+ss6f3538
