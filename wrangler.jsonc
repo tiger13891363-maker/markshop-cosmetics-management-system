@@ -1,8 +1,0 @@
-{
-  "name": "markshop-cosmetics-management-system",
-  "compatibility_date": "2026-09-18",
-  "vars": {
-    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_YqEH58J8ci6b08BD4XTcwg_T7q_6Oxl",
-    "NEXT_PUBLIC_SUPABASE_URL": "https://cxfgsnqfvsbwkjmatqxm.supabase.co"
-  }
-}
